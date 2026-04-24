@@ -1,47 +1,41 @@
-import json
 import logging
-from agents.base import llm_chat
+from langchain_core.prompts import ChatPromptTemplate
+from agents.base import get_llm, get_parser
+from models import SymptomAnalysis
 
 logger = logging.getLogger(__name__)
 
-SYMPTOM_ANALYZER_PROMPT = """你是一名医疗症状分析AI助手。你的职责是系统性地分析报告的症状。
+_parser = get_parser(SymptomAnalysis)
+
+SYMPTOM_ANALYZER_SYSTEM = """你是一名医疗症状分析AI助手。你的职责是系统性地分析报告的症状。
 
 请分析给定症状并完成：
 1. 从描述中识别关键症状
 2. 列出可能解释这些症状的疾病（鉴别列表）
-3. 标记是否存在提示医疗紧急情况的症状（中风、心脏病、过敏性休克等）
+3. 标记是否存在提示医疗紧急情况的症状（中风、心脏病、过敏性休克等）"""
 
-请以JSON格式回复，用中文描述：
-{
-  "key_symptoms": ["症状1", "症状2"],
-  "possible_conditions": ["可能疾病1", "可能疾病2"],
-  "requires_emergency": false
-}"""
+SYMPTOM_ANALYZER_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", SYMPTOM_ANALYZER_SYSTEM + "\n\n输出格式要求：\n{format_instructions}"),
+    ("user", "请分析以下症状：{symptoms}\n持续时间：{duration}\n严重程度：{severity}"),
+]).partial(format_instructions=_parser.get_format_instructions())
 
 
 def analyze(symptoms: str, duration: str = "", severity: str = "") -> dict:
-    user_msg = f"请分析以下症状：{symptoms}"
-    if duration:
-        user_msg += f"\n持续时间：{duration}"
-    if severity:
-        user_msg += f"\n严重程度：{severity}"
+    llm = get_llm(temperature=0.3)
+    chain = SYMPTOM_ANALYZER_PROMPT | llm | _parser
 
     try:
-        result = llm_chat(SYMPTOM_ANALYZER_PROMPT, user_msg)
-        start = result.find("{")
-        end = result.rfind("}") + 1
-        if start >= 0 and end > start:
-            data = json.loads(result[start:end])
-            return {
-                "key_symptoms": data.get("key_symptoms", [symptoms[:50]]) if isinstance(data.get("key_symptoms"), list) else [str(data.get("key_symptoms", symptoms[:50]))],
-                "possible_conditions": data.get("possible_conditions", []) if isinstance(data.get("possible_conditions"), list) else [],
-                "requires_emergency": bool(data.get("requires_emergency", False)),
-            }
+        result: SymptomAnalysis = chain.invoke({
+            "symptoms": symptoms,
+            "duration": duration or "未提供",
+            "severity": severity or "未提供",
+        })
+        return result.model_dump()
     except Exception as e:
-        logger.warning(f"Symptom analysis JSON parse failed: {e}")
+        logger.warning(f"Symptom analysis failed: {e}")
 
-    return {
-        "key_symptoms": [symptoms[:50]],
-        "possible_conditions": ["信息不足，无法确定"],
-        "requires_emergency": False,
-    }
+    return SymptomAnalysis(
+        key_symptoms=[symptoms[:50]],
+        possible_conditions=["信息不足，无法确定"],
+        requires_emergency=False,
+    ).model_dump()

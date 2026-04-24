@@ -1,6 +1,6 @@
 # Medical Diagnosis Multi-Agent System
 
-基于大语言模型的多智能体协作医疗诊断系统，集成 RAG 医学知识检索与记忆管理功能。
+基于大语言模型的多智能体协作医疗诊断系统，使用 **LangChain** + **LangGraph** 进行智能体编排，集成 RAG 医学知识检索与记忆管理功能。
 
 > 免责声明：本系统仅供学习和技术参考，所有 AI 生成内容不构成医疗建议。请务必咨询持牌医疗专业人士。
 
@@ -14,17 +14,17 @@ MedicalAgent/
 │   ├── config.py                     # 环境变量配置
 │   ├── requirements.txt              # Python 依赖
 │   ├── agents/
-│   │   ├── base.py                   # LLM 客户端封装
-│   │   ├── triage.py                 # 分诊智能体
-│   │   ├── symptom_analyzer.py       # 症状分析智能体
-│   │   ├── diagnosis.py              # 诊断智能体
-│   │   ├── treatment.py              # 治疗建议智能体
-│   │   ├── chat_agent.py             # 对话智能体
-│   │   └── orchestrator.py           # 多智能体调度编排器
+│   │   ├── base.py                   # LangChain ChatOpenAI 客户端 + 结构化输出封装
+│   │   ├── triage.py                 # 分诊智能体（LangChain 结构化输出）
+│   │   ├── symptom_analyzer.py       # 症状分析智能体（LangChain 结构化输出）
+│   │   ├── diagnosis.py              # 诊断智能体（LangChain 结构化输出）
+│   │   ├── treatment.py              # 治疗建议智能体（LangChain 结构化输出）
+│   │   ├── chat_agent.py             # 对话智能体（LangChain + 消息历史）
+│   │   └── orchestrator.py           # LangGraph 状态图编排器
 │   ├── rag/
-│   │   └── __init__.py               # 医学知识库 + 检索引擎
+│   │   └── __init__.py               # 医学知识库 + LangChain BaseRetriever
 │   ├── memory/
-│   │   ├── __init__.py               # 会话记忆（内存 + JSON 持久化）
+│   │   ├── __init__.py               # 会话记忆（LangChain ChatMessageHistory + JSON 持久化）
 │   │   └── patient_history.py        # 患者历史档案
 │   ├── models/
 │   │   └── __init__.py               # Pydantic 数据模型
@@ -47,27 +47,41 @@ MedicalAgent/
 
 ## 核心功能
 
-### 多智能体协作 Pipeline
+### LangGraph 多智能体诊断流程
 
-当用户点击"智能诊断"时，系统按序调度 5 个专业智能体：
+当用户点击"智能诊断"时，系统通过 LangGraph StateGraph 按序执行 6 个节点：
 
-| 步骤 | 智能体 | 职责 |
-|------|--------|------|
-| 1 | 分诊 Agent | 评估紧急程度（低/中/高/紧急），建议就诊科室 |
-| 2 | 症状分析 Agent | 提取关键症状，列出可能疾病 |
-| 3 | RAG 检索 | 从医学知识库检索相关参考资料 |
-| 4 | 诊断 Agent | 综合症状 + RAG上下文 → 初步诊断 + 鉴别诊断 |
-| 5 | 治疗建议 Agent | 紧急措施、用药参考、生活方式建议、随访计划 |
+```
+START → triage → symptom_analysis → rag_retrieval → diagnosis → treatment → compile_response → END
+```
+
+| 节点 | 职责 | 技术 |
+|------|------|------|
+| triage | 评估紧急程度（低/中/高/紧急），建议就诊科室 | LangChain `with_structured_output` → `TriageResult` |
+| symptom_analysis | 提取关键症状，列出可能疾病 | LangChain `with_structured_output` → `SymptomAnalysis` |
+| rag_retrieval | 从医学知识库检索相关参考资料 | LangChain `BaseRetriever` 接口 |
+| diagnosis | 综合症状 + RAG上下文 → 初步诊断 + 鉴别诊断 | LangChain `with_structured_output` → `DiagnosisResult` |
+| treatment | 紧急措施、用药参考、生活方式建议、随访计划 | LangChain `with_structured_output` → `TreatmentPlan` |
+| compile_response | 将结构化结果编译为 Markdown 响应 | 纯 Python |
+
+### LangChain 组件使用
+
+- **LLM 调用**：`langchain-openai` 的 `ChatOpenAI` 替代原始 OpenAI SDK
+- **结构化输出**：优先使用 `with_structured_output(method="function_calling")` 直接输出 Pydantic 模型，失败时自动降级为 `PydanticOutputParser`
+- **Prompt 管理**：`ChatPromptTemplate` + `MessagesPlaceholder` 构建多轮对话 prompt
+- **RAG 检索**：`MedicalRetriever` 实现 `BaseRetriever` 接口，支持 `invoke()` 返回 `Document` 列表
+- **会话记忆**：`ChatMessageHistory`（`langchain-community`）管理对话历史，JSON 文件持久化
+- **流程编排**：`langgraph` 的 `StateGraph` 定义节点和边，`compile()` 后全局复用
 
 ### RAG 医学知识检索
 
 - 内置 12 大类常见疾病知识库（感冒、流感、高血压、糖尿病、偏头痛等）
-- 关键词匹配 + 语义相似度评分
-- 检索结果注入 Agent Prompt 提供医学依据
+- 关键词匹配评分
+- 实现 LangChain `BaseRetriever` 接口，返回 `Document` 对象
 
 ### Memory 记忆系统
 
-- **短期记忆**：会话内对话历史，注入 LLM 上下文窗口
+- **短期记忆**：`ChatMessageHistory` 存储对话历史（HumanMessage / AIMessage），限制最近 10 轮
 - **长期记忆**：JSON 文件持久化存储会话记录与患者历史
 - **患者档案**：支持按患者 ID 追踪多次诊断历史
 
@@ -113,7 +127,7 @@ npm run dev
 | POST | `/api/sessions` | 创建会话 |
 | GET | `/api/sessions/{id}` | 获取会话信息 |
 | POST | `/api/chat` | 发送聊天消息 |
-| POST | `/api/diagnosis` | 执行多智能体诊断 |
+| POST | `/api/diagnosis` | 执行 LangGraph 多智能体诊断 |
 
 ### 诊断请求示例
 
@@ -165,6 +179,6 @@ POST /api/diagnosis
 
 ## 技术栈
 
-- **后端**：Python 3.10+ / FastAPI / OpenAI SDK / Pydantic
+- **后端**：Python 3.10+ / FastAPI / LangChain / LangGraph / langchain-openai / Pydantic
 - **前端**：Vue 3 / Element Plus / Axios / Vite
-- **LLM**：兼容 OpenAI API 格式的大语言模型
+- **LLM**：兼容 OpenAI API 格式的大语言模型（通过 ChatOpenAI 统一接入）

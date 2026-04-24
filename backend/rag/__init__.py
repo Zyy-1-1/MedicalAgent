@@ -1,6 +1,8 @@
-import os
-import numpy as np
 from typing import Optional
+from langchain_core.retrievers import BaseRetriever
+from langchain_core.documents import Document
+from langchain_core.callbacks import CallbackManagerForRetrieverRun
+
 
 # Simple keyword-based medical knowledge base
 MEDICAL_KB = [
@@ -79,11 +81,18 @@ MEDICAL_KB = [
 ]
 
 
-class MedicalRetriever:
-    def __init__(self):
+class MedicalRetriever(BaseRetriever):
+    """基于关键词匹配的医学知识检索引擎，实现 LangChain BaseRetriever 接口。"""
+
+    documents: list[dict] = MEDICAL_KB
+    keyword_index: dict = {}
+    top_k: int = 3
+
+    def __init__(self, top_k: int = 3, **kwargs):
+        super().__init__(**kwargs)
+        self.top_k = top_k
         self.documents = MEDICAL_KB
-        # Build a simple keyword index
-        self.keyword_index: dict[str, list[int]] = {}
+        self.keyword_index = {}
         for i, doc in enumerate(self.documents):
             for kw in doc.get("keywords", []):
                 kw_lower = kw.lower()
@@ -103,21 +112,39 @@ class MedicalRetriever:
         score += content_matches * 0.3
         return score
 
-    def retrieve(self, query: str, top_k: int = 3) -> list[dict]:
+    def _get_relevant_documents(
+        self, query: str, *, run_manager: Optional[CallbackManagerForRetrieverRun] = None
+    ) -> list[Document]:
         scores = [(i, self._score_document(doc, query)) for i, doc in enumerate(self.documents)]
         scores.sort(key=lambda x: x[1], reverse=True)
         results = []
-        for idx, score in scores[:top_k]:
+        for idx, score in scores[:self.top_k]:
             if score > 0:
                 doc = self.documents[idx]
-                results.append({
-                    "content": doc["content"],
-                    "source": doc["topic"],
-                    "relevance": min(score / 5.0, 0.99),
-                })
+                results.append(Document(
+                    page_content=doc["content"],
+                    metadata={
+                        "source": doc["topic"],
+                        "relevance": min(score / 5.0, 0.99),
+                    },
+                ))
         return results
 
+    def retrieve(self, query: str, top_k: int = 3) -> list[dict]:
+        """兼容旧接口：返回 dict 格式的结果。"""
+        self.top_k = top_k
+        docs = self.invoke(query)
+        return [
+            {
+                "content": doc.page_content,
+                "source": doc.metadata["source"],
+                "relevance": doc.metadata["relevance"],
+            }
+            for doc in docs
+        ]
+
     def get_context(self, query: str, top_k: int = 3) -> str:
+        """将检索结果格式化为纯文本上下文块。"""
         docs = self.retrieve(query, top_k)
         if not docs:
             return ""
