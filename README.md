@@ -63,59 +63,6 @@ MedicalAgent/
 
 每个智能体是 `autogen.AssistantAgent` 实例，拥有独立的 **system message** 和 **LLM 配置**，通过 `ConversableAgent(UserProxy)` 发起单轮对话调用。
 
-#### 调用机制
-
-```python
-# agents/base.py
-_user_proxy = ConversableAgent("UserProxy", llm_config=False, human_input_mode="NEVER")
-
-async def run_agent(agent: AssistantAgent, message: str) -> str:
-    result = await _user_proxy.a_initiate_chat(
-        recipient=agent,
-        message=message,
-        max_turns=1,       # 单轮：发消息 → 收回复 → 结束
-    )
-    return result.chat_history[-1]["content"]
-```
-
-### 顺序诊断流水线（替代 LangGraph）
-
-不使用 LangGraph StateGraph，改用**简单顺序编排**：
-
-```
-START
-  │
-  ├─ Step 1: TriageAgent ───────────── AutoGen 智能体 #1
-  │     输出 → { urgency, recommended_action, specialty }
-  │
-  ├─ Step 2: SymptomAnalyst ────────── AutoGen 智能体 #2
-  │     输出 → { key_symptoms[], possible_conditions[], requires_emergency }
-  │
-  ├─ Step 3: GraphRAG Retrieval ────── 图遍历（非 LLM）
-  │     输出 → 知识图谱 Top-3 文档 + 格式化上下文
-  │
-  ├─ Step 4: Diagnostician ─────────── AutoGen 智能体 #3
-  │     输入 = 症状 + 患者信息 + GraphRAG 上下文
-  │     输出 → { primary_diagnosis, differential_diagnoses[], confidence, reasoning }
-  │
-  ├─ Step 5: TreatmentAdvisor ──────── AutoGen 智能体 #4
-  │     输入 = 诊断结果 + 症状 + 患者信息 + GraphRAG 上下文
-  │     输出 → { immediate_actions[], medications[], lifestyle[], follow_up }
-  │
-  └─ Step 6: Compile ───────────────── 纯 Python 拼接
-        输出 → Markdown 回复
-```
-
-与 LangGraph 方案的关键区别：
-
-| 特性 | LangGraph | AutoGen 顺序流水线 |
-|------|-----------|-------------------|
-| 状态管理 | `StateGraph(TypedDict)` 全局状态 | Python dict 手动传递 |
-| 节点 | 函数节点 | AutoGen AssistantAgent |
-| 图编译 | `graph.compile()` 构建 DAG | 无编译，直接执行 |
-| 灵活性 | 支持条件边、循环、并行 | 固定顺序，简单直接 |
-| 心智负担 | 需要理解图概念 | 纯函数调用，易于调试 |
-
 ### GraphRAG 知识图谱检索
 
 **80+ 节点** + **200+ 关系边** 的医学知识图谱：
