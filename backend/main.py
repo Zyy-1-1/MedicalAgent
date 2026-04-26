@@ -10,7 +10,7 @@ logging.basicConfig(
 
 app = FastAPI(
     title="Medical Diagnosis Multi-Agent System",
-    description="Multi-agent collaborative medical diagnosis with RAG and Memory",
+    description="Multi-agent collaborative medical diagnosis with GraphRAG",
     version="1.0.0",
 )
 

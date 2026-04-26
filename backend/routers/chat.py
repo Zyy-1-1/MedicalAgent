@@ -20,7 +20,7 @@ async def get_session_info(session_id: str):
     return SessionInfo(
         session_id=sess["id"],
         created_at=sess["created_at"],
-        message_count=len(sess["messages"]),
+        message_count=len(sess["history"].messages),
         patient_info=sess.get("patient_info"),
     )
 

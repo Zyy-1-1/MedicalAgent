@@ -73,6 +73,8 @@ class TreatmentPlan(BaseModel):
 class RetrievedDocument(BaseModel):
     content: str
     source: str
+    source_cn: str = ""
+    type: str = ""
     relevance: float
 
 

@@ -50,7 +50,13 @@ def _rag_retrieval_node(state: DiagnosisState) -> dict:
     docs = retriever.retrieve(state["symptoms"], top_k=3)
     context = retriever.get_context(state["symptoms"], top_k=3)
     references = [
-        RetrievedDocument(content=d["content"], source=d["source"], relevance=d["relevance"]).model_dump()
+        RetrievedDocument(
+            content=d["content"],
+            source=d["source"],
+            source_cn=d.get("source_cn", ""),
+            type=d.get("type", ""),
+            relevance=d["relevance"],
+        ).model_dump()
         for d in docs
     ]
     logger.info(f"[{state['session_id']}] Retrieved {len(references)} references")
