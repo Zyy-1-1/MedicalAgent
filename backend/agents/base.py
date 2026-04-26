@@ -33,7 +33,6 @@ def get_autogen_llm_config(temperature: float = 0.3) -> dict:
         ],
         "temperature": temperature,
         "timeout": 60,
-        "max_retries": 2,
     }
 
 
